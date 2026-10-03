@@ -17,9 +17,20 @@ import { colors, radii, spacing, typography } from '../../../src/theme/mobile-th
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
 import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
 import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
+import {
+  deleteEndpointAuthHeaders,
+  readEndpointAuthHeaders,
+  writeEndpointAuthHeaders
+} from '../../../src/transport/endpoint-auth-headers-store'
+import { normalizeEndpointAuthHeaders } from '../../../src/transport/endpoint-auth-headers'
 import { usePrimeHosts, useRefreshHostClient } from '../../../src/transport/client-context'
 import type { HostProfile } from '../../../src/transport/types'
 import { hostOs } from '../../../src/platform/host-os'
+import {
+  EdgeAuthHeadersSection,
+  newEdgeAuthRow,
+  type EdgeAuthRow
+} from './edge-auth-headers-section'
 
 export default function EditHostScreen() {
   const router = useRouter()
@@ -32,6 +43,9 @@ export default function EditHostScreen() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [authRows, setAuthRows] = useState<EdgeAuthRow[]>(() => [newEdgeAuthRow()])
+  const [initialAuthJson, setInitialAuthJson] = useState('{}')
+  const [storedAuthCount, setStoredAuthCount] = useState(0)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   // Why: setSaving is async, so a second trigger before the re-render could
@@ -55,6 +69,25 @@ export default function EditHostScreen() {
       // The field edits the phone's override; an empty field means "use the desktop's name".
       setName(found.personalName ?? '')
       setAddress(displayHostEndpoint(found.endpoint))
+      try {
+        const stored = await readEndpointAuthHeaders(found.id)
+        const entries = stored ? Object.entries(stored) : []
+        const rows =
+          entries.length > 0
+            ? entries.map(([headerName, headerValue]) => ({
+                ...newEdgeAuthRow(),
+                name: headerName,
+                value: headerValue
+              }))
+            : [newEdgeAuthRow()]
+        setAuthRows(rows)
+        setInitialAuthJson(JSON.stringify(normalizeEndpointAuthHeaders(rows)))
+        setStoredAuthCount(entries.length)
+      } catch {
+        setAuthRows([newEdgeAuthRow()])
+        setInitialAuthJson('{}')
+        setStoredAuthCount(0)
+      }
       setLoadError(null)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load host.')
@@ -74,11 +107,14 @@ export default function EditHostScreen() {
   const nameTrimmed = name.trim()
   const nameChanged = host != null && nameTrimmed !== (host.personalName ?? '')
   const endpointChanged = endpointEdit?.kind === 'changed'
+  const authNormalized = useMemo(() => normalizeEndpointAuthHeaders(authRows), [authRows])
+  const authChanged = authNormalized.ok && JSON.stringify(authNormalized) !== initialAuthJson
   const canSave =
     host != null &&
     endpointEdit != null &&
     endpointEdit.kind !== 'invalid' &&
-    (nameChanged || endpointChanged) &&
+    authNormalized.ok &&
+    (nameChanged || endpointChanged || authChanged) &&
     !saving
 
   async function handleSave() {
@@ -93,7 +129,7 @@ export default function EditHostScreen() {
 
     const willRename = nextName !== (host.personalName ?? '')
     const nextEndpoint = endpointEdit.kind === 'changed' ? endpointEdit.endpoint : undefined
-    if (!willRename && nextEndpoint === undefined) {
+    if (!willRename && nextEndpoint === undefined && !authChanged) {
       router.back()
       return
     }
@@ -109,6 +145,14 @@ export default function EditHostScreen() {
         ...(willRename ? { personalName: nextName || null } : {}),
         ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
       })
+      if (authChanged && authNormalized.ok) {
+        // Why: auth rows normalize blank to {}; an empty save clears rather than storing nothing.
+        if (Object.keys(authNormalized.headers).length === 0) {
+          await deleteEndpointAuthHeaders(host.id)
+        } else {
+          await writeEndpointAuthHeaders(host.id, authNormalized.headers)
+        }
+      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save host.')
       savingRef.current = false
@@ -130,7 +174,7 @@ export default function EditHostScreen() {
     setSaving(false)
     router.back()
 
-    if (nextEndpoint !== undefined) {
+    if (nextEndpoint !== undefined || authChanged) {
       // Why: the live client, even one riding the relay, and its primed profile hold the old address.
       refreshHostClient(host.id)
     }
@@ -243,6 +287,16 @@ export default function EditHostScreen() {
             ) : address.trim().length > 0 ? (
               <Text style={styles.previewError}>{endpointEdit.error}</Text>
             ) : null}
+
+            <EdgeAuthHeadersSection
+              rows={authRows}
+              storedCount={storedAuthCount}
+              error={authNormalized.ok ? null : authNormalized.error}
+              onRowsChange={(rows) => {
+                setAuthRows(rows)
+                setSaveError(null)
+              }}
+            />
 
             {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
           </ScrollView>

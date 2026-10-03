@@ -1,4 +1,9 @@
 import { publicKeyFromBase64 } from './e2ee'
+import {
+  createEndpointAuthSocket,
+  describeEndpointAuthHeadersForLog,
+  type EndpointAuthHeaders
+} from './endpoint-auth-headers'
 import { RpcClientSocketSession } from './rpc-client-socket-session'
 import { redactSocketEndpoint } from './socket-event-debug'
 import type { ConnectionLogEmitter, ConnectionState, RpcResponse } from './types'
@@ -7,6 +12,7 @@ type SocketFactoryOptions = {
   endpoint: string
   deviceToken: string
   serverPublicKeyB64: string
+  edgeAuthHeaders?: EndpointAuthHeaders | null
   getCurrentSocket: () => WebSocket | null
   getState: () => ConnectionState
   getReconnectAttempt: () => number
@@ -41,6 +47,7 @@ export class RpcClientSocketFactory {
     console.log('[net] openConnection', {
       attempt: this.options.getReconnectAttempt(),
       endpoint: redactSocketEndpoint(this.options.endpoint),
+      auth: describeEndpointAuthHeadersForLog(this.options.edgeAuthHeaders ?? null),
       wsCount: this.constructionCount,
       msSinceLastConnected: lastConnectedAt !== null ? now - lastConnectedAt : null,
       msSinceLastClose: this.lastSocketClosedAt !== null ? now - this.lastSocketClosedAt : null,
@@ -54,10 +61,15 @@ export class RpcClientSocketFactory {
         : 'Opening WebSocket',
       redactSocketEndpoint(this.options.endpoint)
     )
+    const edgeAuthHeaders = this.options.edgeAuthHeaders
     return new RpcClientSocketSession({
       endpoint: this.options.endpoint,
       deviceToken: this.options.deviceToken,
       serverPublicKey: this.serverPublicKey,
+      createSocket:
+        edgeAuthHeaders && Object.keys(edgeAuthHeaders).length > 0
+          ? (url) => createEndpointAuthSocket(url, edgeAuthHeaders)
+          : undefined,
       getCurrentSocket: this.options.getCurrentSocket,
       getState: this.options.getState,
       getReconnectAttempt: this.options.getReconnectAttempt,
