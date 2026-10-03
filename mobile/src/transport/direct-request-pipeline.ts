@@ -8,7 +8,11 @@ export function createDirectRequestPipeline(input: {
   getState: () => ConnectionState
   waitForConnected: (timeoutMs?: number) => Promise<void>
   sendEncrypted: (request: unknown) => boolean
-}): { requests: RpcClientRequestTracker; streams: RpcClientStreamRegistry } {
+}): {
+  requests: RpcClientRequestTracker
+  streams: RpcClientStreamRegistry
+  nextId: () => string
+} {
   let requestCounter = 0
   const nextId = () => `rpc-${++requestCounter}-${Date.now()}`
   return {
@@ -24,6 +28,7 @@ export function createDirectRequestPipeline(input: {
       deviceToken: input.deviceToken,
       getState: input.getState,
       sendEncrypted: input.sendEncrypted
-    })
+    }),
+    nextId
   }
 }

@@ -111,6 +111,9 @@ export async function openHostClientEntry(
       // Why: SecureStore reads are async but the dial path is sync — prime the
       // in-memory snapshot here so every socket this client opens carries it.
       await primeEndpointAuthHeaders(hostId)
+      if (!isCurrent() || !isWanted() || state.store.has(hostId)) {
+        return state.store.get(hostId) ?? null
+      }
       client = openHostLogicalClient(host, (entry) => connectionLogStore.append(hostId, entry))
     } catch {
       failCurrentOpen('client-construction')

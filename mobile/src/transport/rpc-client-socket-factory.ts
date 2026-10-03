@@ -2,6 +2,7 @@ import { publicKeyFromBase64 } from './e2ee'
 import {
   createEndpointAuthSocket,
   describeEndpointAuthHeadersForLog,
+  edgeAuthHeadersForEndpoint,
   type EndpointAuthHeaders
 } from './endpoint-auth-headers'
 import { RpcClientSocketSession } from './rpc-client-socket-session'
@@ -61,7 +62,21 @@ export class RpcClientSocketFactory {
         : 'Opening WebSocket',
       redactSocketEndpoint(this.options.endpoint)
     )
-    const edgeAuthHeaders = this.options.edgeAuthHeaders
+    const edgeAuthHeaders = edgeAuthHeadersForEndpoint(
+      this.options.endpoint,
+      this.options.edgeAuthHeaders ?? null
+    )
+    if (this.options.edgeAuthHeaders && !edgeAuthHeaders) {
+      // Why: values stay out of every log; the names-only helper says which edge config was refused.
+      console.log('[net] dropping edge-auth headers for non-wss endpoint', {
+        auth: describeEndpointAuthHeadersForLog(this.options.edgeAuthHeaders)
+      })
+      this.options.emitLog(
+        'warn',
+        'Edge authentication needs wss',
+        'Saved headers were not sent because the endpoint is not wss://'
+      )
+    }
     return new RpcClientSocketSession({
       endpoint: this.options.endpoint,
       deviceToken: this.options.deviceToken,

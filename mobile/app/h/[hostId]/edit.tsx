@@ -15,22 +15,15 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
-import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
+import { displayHostEndpoint, endpointScheme } from '../../../src/transport/host-endpoint'
 import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
-import {
-  deleteEndpointAuthHeaders,
-  readEndpointAuthHeaders,
-  writeEndpointAuthHeaders
-} from '../../../src/transport/endpoint-auth-headers-store'
-import { normalizeEndpointAuthHeaders } from '../../../src/transport/endpoint-auth-headers'
 import { usePrimeHosts, useRefreshHostClient } from '../../../src/transport/client-context'
 import type { HostProfile } from '../../../src/transport/types'
 import { hostOs } from '../../../src/platform/host-os'
 import {
   EdgeAuthHeadersSection,
-  newEdgeAuthRow,
-  type EdgeAuthRow
-} from './edge-auth-headers-section'
+  useEdgeAuthHeaders
+} from '../../../src/components/edge-auth-headers-section'
 
 export default function EditHostScreen() {
   const router = useRouter()
@@ -43,9 +36,7 @@ export default function EditHostScreen() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
-  const [authRows, setAuthRows] = useState<EdgeAuthRow[]>(() => [newEdgeAuthRow()])
-  const [initialAuthJson, setInitialAuthJson] = useState('{}')
-  const [storedAuthCount, setStoredAuthCount] = useState(0)
+  const edgeAuth = useEdgeAuthHeaders()
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   // Why: setSaving is async, so a second trigger before the re-render could
@@ -70,23 +61,13 @@ export default function EditHostScreen() {
       setName(found.personalName ?? '')
       setAddress(displayHostEndpoint(found.endpoint))
       try {
-        const stored = await readEndpointAuthHeaders(found.id)
-        const entries = stored ? Object.entries(stored) : []
-        const rows =
-          entries.length > 0
-            ? entries.map(([headerName, headerValue]) => ({
-                ...newEdgeAuthRow(),
-                name: headerName,
-                value: headerValue
-              }))
-            : [newEdgeAuthRow()]
-        setAuthRows(rows)
-        setInitialAuthJson(JSON.stringify(normalizeEndpointAuthHeaders(rows)))
-        setStoredAuthCount(entries.length)
+        await edgeAuth.loadAuthForHost(found.id)
       } catch {
-        setAuthRows([newEdgeAuthRow()])
-        setInitialAuthJson('{}')
-        setStoredAuthCount(0)
+        // Why: without a readable baseline a save could delete headers it never loaded —
+        // block the whole form until a retry can establish it.
+        setLoadError('Could not load edge authentication for this host.')
+        setHost(null)
+        return
       }
       setLoadError(null)
     } catch (err) {
@@ -107,13 +88,28 @@ export default function EditHostScreen() {
   const nameTrimmed = name.trim()
   const nameChanged = host != null && nameTrimmed !== (host.personalName ?? '')
   const endpointChanged = endpointEdit?.kind === 'changed'
-  const authNormalized = useMemo(() => normalizeEndpointAuthHeaders(authRows), [authRows])
-  const authChanged = authNormalized.ok && JSON.stringify(authNormalized) !== initialAuthJson
+  const { authNormalized, authChanged } = edgeAuth
+  // Why: headers ride the handshake in cleartext on ws:// — only encrypted transports may carry them.
+  const resolvedEndpoint = endpointEdit?.kind === 'changed' ? endpointEdit.endpoint : host?.endpoint
+  const authNeedsWss =
+    authNormalized.ok &&
+    Object.keys(authNormalized.headers).length > 0 &&
+    (resolvedEndpoint == null || endpointScheme(resolvedEndpoint) !== 'wss')
+  const authSectionError = useMemo(() => {
+    if (!authNormalized.ok) {
+      return authNormalized.error
+    }
+    // Why: surfaced under the section; canSave already blocks the save itself.
+    return authNeedsWss
+      ? 'Edge authentication needs a wss:// address — headers are never sent over ws://.'
+      : null
+  }, [authNormalized, authNeedsWss])
   const canSave =
     host != null &&
     endpointEdit != null &&
     endpointEdit.kind !== 'invalid' &&
     authNormalized.ok &&
+    !authNeedsWss &&
     (nameChanged || endpointChanged || authChanged) &&
     !saving
 
@@ -145,30 +141,30 @@ export default function EditHostScreen() {
         ...(willRename ? { personalName: nextName || null } : {}),
         ...(nextEndpoint !== undefined ? { endpoint: nextEndpoint } : {})
       })
-      if (authChanged && authNormalized.ok) {
-        // Why: auth rows normalize blank to {}; an empty save clears rather than storing nothing.
-        if (Object.keys(authNormalized.headers).length === 0) {
-          await deleteEndpointAuthHeaders(host.id)
-        } else {
-          await writeEndpointAuthHeaders(host.id, authNormalized.headers)
-        }
-      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save host.')
       savingRef.current = false
       setSaving(false)
       return
     }
-
-    try {
-      // Why: the write already committed above; a re-prime failure here
-      // must not be reported as a save failure — the next loadHosts() call
-      // elsewhere in the app picks up the fresh state regardless.
-      const hosts = await loadHosts()
-      primeHosts(hosts)
-    } catch {
-      // best-effort re-prime; persisted data is unaffected
+    if (authChanged && authNormalized.ok) {
+      try {
+        await edgeAuth.persistAuthChanges(host.id, authNormalized.headers)
+      } catch {
+        // Why: metadata already committed above — surface a static message (never a keychain
+        // error, which can echo secrets) but still refresh a moved endpoint below.
+        setSaveError('Could not save edge authentication.')
+        await reprimeHosts()
+        savingRef.current = false
+        setSaving(false)
+        if (nextEndpoint !== undefined) {
+          refreshHostClient(host.id)
+        }
+        return
+      }
     }
+
+    await reprimeHosts()
 
     savingRef.current = false
     setSaving(false)
@@ -177,6 +173,18 @@ export default function EditHostScreen() {
     if (nextEndpoint !== undefined || authChanged) {
       // Why: the live client, even one riding the relay, and its primed profile hold the old address.
       refreshHostClient(host.id)
+    }
+  }
+
+  async function reprimeHosts() {
+    try {
+      // Why: the write already committed above; a re-prime failure here
+      // must not be reported as a save failure — the next loadHosts() call
+      // elsewhere in the app picks up the fresh state regardless.
+      const hosts = await loadHosts()
+      primeHosts(hosts)
+    } catch {
+      // best-effort re-prime; persisted data is unaffected
     }
   }
 
@@ -288,15 +296,17 @@ export default function EditHostScreen() {
               <Text style={styles.previewError}>{endpointEdit.error}</Text>
             ) : null}
 
-            <EdgeAuthHeadersSection
-              rows={authRows}
-              storedCount={storedAuthCount}
-              error={authNormalized.ok ? null : authNormalized.error}
-              onRowsChange={(rows) => {
-                setAuthRows(rows)
-                setSaveError(null)
-              }}
-            />
+            {Platform.OS !== 'web' ? (
+              <EdgeAuthHeadersSection
+                rows={edgeAuth.authRows}
+                storedCount={edgeAuth.storedAuthCount}
+                error={authSectionError}
+                onRowsChange={(rows) => {
+                  edgeAuth.setAuthRows(rows)
+                  setSaveError(null)
+                }}
+              />
+            ) : null}
 
             {saveError ? <Text style={styles.errorText}>{saveError}</Text> : null}
           </ScrollView>

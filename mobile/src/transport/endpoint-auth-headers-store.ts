@@ -53,6 +53,7 @@ export async function writeEndpointAuthHeaders(
   const validated = EndpointAuthBundleSchema.parse({ v: 1, hostId, headers })
   markHostCredentialWrite(validated.hostId)
   await writePairingKeychainItem(headersKey(validated.hostId), JSON.stringify(validated))
+  cacheEndpointAuthSnapshot(validated.hostId, validated.headers)
 }
 
 export async function deleteEndpointAuthHeaders(hostId: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { connect } from './rpc-client'
+import { RpcClientSocketFactory } from './rpc-client-socket-factory'
 import type { ConnectionLogEntry } from './types'
 
 vi.mock('./e2ee', () => ({
@@ -89,5 +90,54 @@ describe('direct socket edge-auth headers', () => {
     expect(JSON.stringify(logs)).not.toContain('id-abc')
     expect(JSON.stringify(logs)).not.toContain('secret-xyz')
     client.close()
+  })
+
+  it('drops headers for ws:// endpoints instead of sending cleartext', () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const logs: ConnectionLogEntry[] = []
+    const client = connect('ws://192.168.1.10:6768', 'device-token', 'server-key', {
+      onLog: (entry) => logs.push(entry),
+      edgeAuthHeaders: { 'CF-Access-Client-Id': 'id-abc' }
+    })
+
+    expect(seenWebSocketArgs).toHaveLength(1)
+    expect(seenWebSocketArgs[0]).toHaveLength(1)
+    const consoleText = consoleSpy.mock.calls.map((call) => JSON.stringify(call)).join('\n')
+    expect(consoleText).toContain('non-wss')
+    expect(consoleText).not.toContain('id-abc')
+    expect(JSON.stringify(logs)).not.toContain('id-abc')
+    client.close()
+  })
+
+  it('reuses the snapshot across reconnect dials', () => {
+    const headers = { 'CF-Access-Client-Id': 'id-abc' }
+    const factory = new RpcClientSocketFactory({
+      endpoint: 'wss://tunnel.example:443/runtime',
+      deviceToken: 'device-token',
+      serverPublicKeyB64: 'server-key',
+      edgeAuthHeaders: headers,
+      getCurrentSocket: () => null,
+      getState: () => 'connecting',
+      getReconnectAttempt: () => 1,
+      getLastConnectedAt: () => null,
+      isIntentionallyClosed: () => false,
+      emitLog: () => {},
+      onHandshakeStarted: () => {},
+      onAuthenticated: () => {},
+      onAuthRejected: () => {},
+      onRpcResponse: () => {},
+      onBinary: () => {},
+      onAuthenticatedInbound: () => {},
+      onClosed: () => {},
+      onForcedClose: () => {}
+    })
+
+    const first = factory.open()
+    const second = factory.open()
+    expect(seenWebSocketArgs).toHaveLength(2)
+    expect(seenWebSocketArgs[0]?.[2]).toEqual({ headers })
+    expect(seenWebSocketArgs[1]?.[2]).toEqual({ headers })
+    first.clearTimers()
+    second.clearTimers()
   })
 })

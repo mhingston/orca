@@ -36,7 +36,7 @@ export class DirectRpcClient implements RpcClient {
   private readonly connectionLog: DirectConnectionLog
   private intentionallyClosed = false
   private authenticationGeneration = 0
-  private livenessCounter = 0
+  private readonly nextId: () => string
   private livenessSession: RpcClientSocketSession | null = null
 
   constructor(
@@ -66,6 +66,7 @@ export class DirectRpcClient implements RpcClient {
     })
     this.requests = pipeline.requests
     this.streams = pipeline.streams
+    this.nextId = pipeline.nextId
     this.liveness = new RpcSessionLivenessWatchdog({
       transport: 'direct',
       sendProbe: (identity) => identity === this.livenessSession && this.sendLivenessProbe(),
@@ -299,7 +300,7 @@ export class DirectRpcClient implements RpcClient {
       return false
     }
     return this.sendEncrypted({
-      id: `${LIVENESS_REQUEST_ID_PREFIX}${++this.livenessCounter}-${Date.now()}`,
+      id: `${LIVENESS_REQUEST_ID_PREFIX}${this.nextId()}`,
       deviceToken: this.deviceToken,
       method: 'status.get'
     })

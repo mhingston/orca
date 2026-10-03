@@ -1,3 +1,5 @@
+import { endpointScheme } from './host-endpoint'
+
 export type EndpointAuthHeaders = Record<string, string>
 
 export type NormalizeEndpointAuthHeadersResult =
@@ -6,7 +8,10 @@ export type NormalizeEndpointAuthHeadersResult =
 
 const MAX_HEADERS = 8
 const MAX_NAME_LENGTH = 128
-const MAX_VALUE_LENGTH = 4096
+// Why: SecureStore values live in the OS keychain, which rejects large payloads;
+// service tokens are tens of bytes, so 1 KiB per value leaves ample headroom.
+const MAX_VALUE_LENGTH = 1024
+const MAX_INVALID_NAME_PREVIEW = 64
 // RFC 9110 token: what a reverse proxy accepts as a header name on the wire.
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 
@@ -46,7 +51,10 @@ export function normalizeEndpointAuthHeaders(rows: unknown): NormalizeEndpointAu
       continue
     }
     if (!isValidName(trimmedName)) {
-      return { ok: false, error: `Invalid header name: "${trimmedName}".` }
+      return {
+        ok: false,
+        error: `Invalid header name: "${trimmedName.slice(0, MAX_INVALID_NAME_PREVIEW)}".`
+      }
     }
     if (!isValidValue(trimmedValue)) {
       return { ok: false, error: `Invalid value for header "${trimmedName}".` }
@@ -73,11 +81,24 @@ export function describeEndpointAuthHeadersForLog(headers: EndpointAuthHeaders |
   return `edge-auth headers: ${Object.keys(headers).join(', ')}`
 }
 
-/** Native-only: React Native accepts handshake headers; browsers and the web bridge do not. */
+/** Native-only: React Native accepts handshake headers; browsers and the web bridge do not.
+ * Web callers structurally cannot reach this (no-op store sibling keeps headers null, and the
+ * edit screen hides the controls on web), so there is no Platform gate here by design. */
 export function createEndpointAuthSocket(url: string, headers: EndpointAuthHeaders): WebSocket {
   // Why Reflect: the DOM lib type only knows the two-arg constructor, so the third arg cannot be
   // written directly; React Native's runtime WebSocket accepts (url, protocols, { headers }).
   return Reflect.construct(WebSocket, [url, undefined, { headers }])
+}
+
+/** Fail closed: headers ride only encrypted transports, never ws:// cleartext. */
+export function edgeAuthHeadersForEndpoint(
+  endpoint: string,
+  headers: EndpointAuthHeaders | null
+): EndpointAuthHeaders | null {
+  if (!headers || Object.keys(headers).length === 0) {
+    return null
+  }
+  return endpointScheme(endpoint) === 'wss' ? headers : null
 }
 
 const snapshotByHostId = new Map<string, EndpointAuthHeaders>()

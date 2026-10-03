@@ -1,5 +1,15 @@
+import { useCallback, useMemo, useState } from 'react'
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
-import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
+import { colors, radii, spacing, typography } from '../theme/mobile-theme'
+import {
+  deleteEndpointAuthHeaders,
+  readEndpointAuthHeaders,
+  writeEndpointAuthHeaders
+} from '../transport/endpoint-auth-headers-store'
+import {
+  normalizeEndpointAuthHeaders,
+  type EndpointAuthHeaders
+} from '../transport/endpoint-auth-headers'
 
 export type EdgeAuthRow = { id: string; name: string; value: string }
 
@@ -8,6 +18,53 @@ let nextRowId = 0
 export function newEdgeAuthRow(): EdgeAuthRow {
   nextRowId += 1
   return { id: `edge-auth-${nextRowId}`, name: '', value: '' }
+}
+
+export function useEdgeAuthHeaders() {
+  const [authRows, setAuthRows] = useState<EdgeAuthRow[]>(() => [newEdgeAuthRow()])
+  // Why: blank rows normalize to { ok: true, headers: {} } — seed the same fingerprint so the
+  // form never reports a phantom change before the stored headers finish loading.
+  const [initialAuthJson, setInitialAuthJson] = useState(() =>
+    JSON.stringify({ ok: true, headers: {} })
+  )
+  const [storedAuthCount, setStoredAuthCount] = useState(0)
+  const authNormalized = useMemo(() => normalizeEndpointAuthHeaders(authRows), [authRows])
+  const authChanged = authNormalized.ok && JSON.stringify(authNormalized) !== initialAuthJson
+
+  const loadAuthForHost = useCallback(async (hostId: string) => {
+    const stored = await readEndpointAuthHeaders(hostId)
+    const entries = stored ? Object.entries(stored) : []
+    const rows =
+      entries.length > 0
+        ? entries.map(([headerName, headerValue]) => ({
+            ...newEdgeAuthRow(),
+            name: headerName,
+            value: headerValue
+          }))
+        : [newEdgeAuthRow()]
+    setAuthRows(rows)
+    setInitialAuthJson(JSON.stringify(normalizeEndpointAuthHeaders(rows)))
+    setStoredAuthCount(entries.length)
+  }, [])
+
+  const persistAuthChanges = useCallback(async (hostId: string, headers: EndpointAuthHeaders) => {
+    // Why: auth rows normalize blank to {}; an empty save clears rather than storing nothing.
+    if (Object.keys(headers).length === 0) {
+      await deleteEndpointAuthHeaders(hostId)
+    } else {
+      await writeEndpointAuthHeaders(hostId, headers)
+    }
+  }, [])
+
+  return {
+    authRows,
+    setAuthRows,
+    authNormalized,
+    authChanged,
+    storedAuthCount,
+    loadAuthForHost,
+    persistAuthChanges
+  }
 }
 
 export function EdgeAuthHeadersSection({

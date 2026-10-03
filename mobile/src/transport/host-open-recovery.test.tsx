@@ -9,6 +9,7 @@ import type { ConnectionState } from './types'
 
 const openHostLogicalClientMock = vi.fn()
 const loadHostsMock = vi.fn()
+const primeAuth = vi.hoisted(() => ({ prime: vi.fn(async (_hostId: string) => null) }))
 const revival = vi.hoisted(() => ({ callback: null as null | ((reason: 'focus') => void) }))
 
 // Why: the opener starts a descriptor status probe per connection; these fakes have no RPC surface.
@@ -24,7 +25,7 @@ vi.mock('./host-store', () => ({
   loadHosts: () => loadHostsMock()
 }))
 vi.mock('./endpoint-auth-headers-store', () => ({
-  primeEndpointAuthHeaders: async () => null
+  primeEndpointAuthHeaders: (hostId: string) => primeAuth.prime(hostId)
 }))
 vi.mock('./connection-revival-triggers', () => ({
   subscribeConnectionRevivalTriggers: (callback: (reason: 'focus') => void) => {
@@ -79,6 +80,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   openHostLogicalClientMock.mockReset()
   loadHostsMock.mockReset()
+  primeAuth.prime.mockClear()
   revival.callback = null
 })
 
@@ -111,6 +113,7 @@ describe('wanted host open recovery', () => {
 
       expect(loadHostsMock).toHaveBeenCalledTimes(2)
       expect(openHostLogicalClientMock).toHaveBeenCalledOnce()
+      expect(primeAuth.prime).toHaveBeenCalledWith(HOST.id)
       expect(observed).toMatchObject({ client, state: 'connected' })
     } finally {
       act(() => renderer?.unmount())

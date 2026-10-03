@@ -3,6 +3,7 @@ import {
   cacheEndpointAuthSnapshot,
   clearEndpointAuthHeadersCache,
   describeEndpointAuthHeadersForLog,
+  edgeAuthHeadersForEndpoint,
   normalizeEndpointAuthHeaders,
   peekEndpointAuthHeaders
 } from './endpoint-auth-headers'
@@ -44,7 +45,7 @@ describe('normalizeEndpointAuthHeaders', () => {
     expect(normalizeEndpointAuthHeaders([{ name: 'has space', value: 'v' }]).ok).toBe(false)
     expect(normalizeEndpointAuthHeaders([{ name: 'X-Ok', value: '' }]).ok).toBe(false)
     expect(normalizeEndpointAuthHeaders([{ name: 'X-Ok', value: 'has\nnewline' }]).ok).toBe(false)
-    expect(normalizeEndpointAuthHeaders([{ name: 'X-Ok', value: 'x'.repeat(4097) }]).ok).toBe(false)
+    expect(normalizeEndpointAuthHeaders([{ name: 'X-Ok', value: 'x'.repeat(1025) }]).ok).toBe(false)
   })
 
   it('dedupes case-insensitive names with last value winning', () => {
@@ -77,6 +78,16 @@ describe('describeEndpointAuthHeadersForLog', () => {
   it('reports empty input', () => {
     expect(describeEndpointAuthHeadersForLog(null)).toBe('no edge-auth headers')
     expect(describeEndpointAuthHeadersForLog({})).toBe('no edge-auth headers')
+  })
+})
+
+describe('edgeAuthHeadersForEndpoint', () => {
+  it('passes headers only on encrypted transports', () => {
+    const headers = { 'CF-Access-Client-Id': 'id' }
+    expect(edgeAuthHeadersForEndpoint('wss://tunnel.example/x', headers)).toEqual(headers)
+    expect(edgeAuthHeadersForEndpoint('ws://192.168.1.10:6768', headers)).toBeNull()
+    expect(edgeAuthHeadersForEndpoint('wss://tunnel.example/x', null)).toBeNull()
+    expect(edgeAuthHeadersForEndpoint('wss://tunnel.example/x', {})).toBeNull()
   })
 })
 

@@ -59,6 +59,12 @@ describe('endpoint auth header storage', () => {
     expect(await readEndpointAuthHeaders('host-1')).toEqual({ 'CF-Access-Client-Id': 'id-123' })
   })
 
+  it('writes through to the in-memory snapshot', async () => {
+    secureStoreMock.setItemAsync.mockResolvedValue(undefined)
+    await writeEndpointAuthHeaders('host-1', { 'CF-Access-Client-Id': 'id-123' })
+    expect(peekEndpointAuthHeaders('host-1')).toEqual({ 'CF-Access-Client-Id': 'id-123' })
+  })
+
   it('returns null for another host id or corrupt payloads', async () => {
     secureStoreMock.getItemAsync.mockResolvedValue(
       JSON.stringify({ v: 1, hostId: 'host-2', headers: { 'X-A': 'b' } })
