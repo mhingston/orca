@@ -1,6 +1,16 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  findNodeHandle,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type ScrollView
+} from 'react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
+import { subscribeSoftKeyboard } from '../platform/keyboard-occlusion'
 import {
   deleteEndpointAuthHeaders,
   readEndpointAuthHeaders,
@@ -12,6 +22,9 @@ import {
 } from '../transport/endpoint-auth-headers'
 
 export type EdgeAuthRow = { id: string; name: string; value: string }
+
+/** The only scroller capability the section needs — narrow so tests can stub it. */
+export type EdgeAuthScrollTarget = Pick<ScrollView, 'scrollResponderScrollNativeHandleToKeyboard'>
 
 let nextRowId = 0
 
@@ -71,13 +84,43 @@ export function EdgeAuthHeadersSection({
   rows,
   storedCount,
   error,
-  onRowsChange
+  onRowsChange,
+  scrollViewRef
 }: {
   rows: EdgeAuthRow[]
   storedCount: number
   error: string | null
   onRowsChange: (rows: EdgeAuthRow[]) => void
+  scrollViewRef: { current: EdgeAuthScrollTarget | null }
 }) {
+  const focusedRowId = useRef<string | null>(null)
+  const rowRefs = useRef(new Map<string, View>())
+  useEffect(
+    () =>
+      // Why: bottom rows sit under the keyboard on small screens — scroll the focused row
+      // into view when the keyboard lands, on top of whatever the OS already does.
+      subscribeSoftKeyboard(
+        () => {
+          const row = focusedRowId.current ? rowRefs.current.get(focusedRowId.current) : undefined
+          const scroller = scrollViewRef.current
+          if (!row || !scroller) {
+            return
+          }
+          const handle = findNodeHandle(row)
+          if (typeof handle !== 'number') {
+            return
+          }
+          scroller.scrollResponderScrollNativeHandleToKeyboard(handle, spacing.md, true)
+        },
+        () => {
+          focusedRowId.current = null
+        }
+      ),
+    [scrollViewRef]
+  )
+  const focusRow = useCallback((id: string) => {
+    focusedRowId.current = id
+  }, [])
   return (
     <View>
       <Text style={styles.label}>Edge authentication</Text>
@@ -88,11 +131,22 @@ export function EdgeAuthHeadersSection({
         {storedCount > 0 ? ` ${storedCount} header${storedCount === 1 ? '' : 's'} saved.` : ''}
       </Text>
       {rows.map((row, index) => (
-        <View key={row.id} style={styles.authRow}>
+        <View
+          key={row.id}
+          ref={(element) => {
+            if (element) {
+              rowRefs.current.set(row.id, element)
+            } else {
+              rowRefs.current.delete(row.id)
+            }
+          }}
+          style={styles.authRow}
+        >
           <TextInput
             style={[styles.input, styles.authName]}
             accessibilityLabel={`Header ${index + 1} name`}
             value={row.name}
+            onFocus={() => focusRow(row.id)}
             onChangeText={(value) =>
               onRowsChange(rows.map((r) => (r.id === row.id ? { ...r, name: value } : r)))
             }
@@ -106,6 +160,7 @@ export function EdgeAuthHeadersSection({
             style={[styles.input, styles.authValue]}
             accessibilityLabel={`Header ${index + 1} value`}
             value={row.value}
+            onFocus={() => focusRow(row.id)}
             onChangeText={(value) =>
               onRowsChange(rows.map((r) => (r.id === row.id ? { ...r, value } : r)))
             }

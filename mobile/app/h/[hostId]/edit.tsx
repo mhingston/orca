@@ -15,14 +15,16 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { loadHosts, updateHostNameAndEndpoint } from '../../../src/transport/host-store'
-import { displayHostEndpoint, endpointScheme } from '../../../src/transport/host-endpoint'
+import { displayHostEndpoint } from '../../../src/transport/host-endpoint'
+import { checkEdgeAuthEndpoint } from '../../../src/transport/endpoint-auth-headers'
 import { resolveHostEndpointEdit } from '../../../src/transport/host-endpoint-edit'
 import { usePrimeHosts, useRefreshHostClient } from '../../../src/transport/client-context'
 import type { HostProfile } from '../../../src/transport/types'
 import { hostOs } from '../../../src/platform/host-os'
 import {
   EdgeAuthHeadersSection,
-  useEdgeAuthHeaders
+  useEdgeAuthHeaders,
+  type EdgeAuthScrollTarget
 } from '../../../src/components/edge-auth-headers-section'
 
 export default function EditHostScreen() {
@@ -42,6 +44,7 @@ export default function EditHostScreen() {
   // Why: setSaving is async, so a second trigger before the re-render could
   // still read stale state and re-enter handleSave; the ref closes that race.
   const savingRef = useRef(false)
+  const authScrollTarget = useRef<EdgeAuthScrollTarget | null>(null)
 
   const load = useCallback(async () => {
     if (!hostId) {
@@ -90,26 +93,17 @@ export default function EditHostScreen() {
   const endpointChanged = endpointEdit?.kind === 'changed'
   const { authNormalized, authChanged } = edgeAuth
   // Why: headers ride the handshake in cleartext on ws:// — only encrypted transports may carry them.
-  const resolvedEndpoint = endpointEdit?.kind === 'changed' ? endpointEdit.endpoint : host?.endpoint
-  const authNeedsWss =
-    authNormalized.ok &&
-    Object.keys(authNormalized.headers).length > 0 &&
-    (resolvedEndpoint == null || endpointScheme(resolvedEndpoint) !== 'wss')
-  const authSectionError = useMemo(() => {
-    if (!authNormalized.ok) {
-      return authNormalized.error
-    }
-    // Why: surfaced under the section; canSave already blocks the save itself.
-    return authNeedsWss
-      ? 'Edge authentication needs a wss:// address — headers are never sent over ws://.'
-      : null
-  }, [authNormalized, authNeedsWss])
+  const authEndpointCheck = checkEdgeAuthEndpoint(
+    authNormalized.ok ? authNormalized.headers : null,
+    endpointEdit?.kind === 'changed' ? endpointEdit.endpoint : host?.endpoint
+  )
+  const authSectionError = !authNormalized.ok ? authNormalized.error : authEndpointCheck.error
   const canSave =
     host != null &&
     endpointEdit != null &&
     endpointEdit.kind !== 'invalid' &&
     authNormalized.ok &&
-    !authNeedsWss &&
+    !authEndpointCheck.blocked &&
     (nameChanged || endpointChanged || authChanged) &&
     !saving
 
@@ -235,6 +229,9 @@ export default function EditHostScreen() {
           behavior={hostOs() === 'ios' ? 'padding' : undefined}
         >
           <ScrollView
+            ref={(node) => {
+              authScrollTarget.current = node
+            }}
             contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + spacing.xl }]}
             keyboardShouldPersistTaps="handled"
           >
@@ -305,6 +302,7 @@ export default function EditHostScreen() {
                   edgeAuth.setAuthRows(rows)
                   setSaveError(null)
                 }}
+                scrollViewRef={authScrollTarget}
               />
             ) : null}
 

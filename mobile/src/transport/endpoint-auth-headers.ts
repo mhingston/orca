@@ -101,6 +101,23 @@ export function edgeAuthHeadersForEndpoint(
   return endpointScheme(endpoint) === 'wss' ? headers : null
 }
 
+/** Editor-side companion: whether headers are blocked for an endpoint, and why. */
+export function checkEdgeAuthEndpoint(
+  headers: EndpointAuthHeaders | null,
+  endpoint: string | undefined
+): { blocked: boolean; error: string | null } {
+  if (!headers || Object.keys(headers).length === 0) {
+    return { blocked: false, error: null }
+  }
+  if (endpoint && endpointScheme(endpoint) === 'wss') {
+    return { blocked: false, error: null }
+  }
+  return {
+    blocked: true,
+    error: 'Edge authentication needs a wss:// address — headers are never sent over ws://.'
+  }
+}
+
 const snapshotByHostId = new Map<string, EndpointAuthHeaders>()
 const mutationEpochByHostId = new Map<string, number>()
 
