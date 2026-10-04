@@ -4,7 +4,10 @@ import {
   normalizeEndpointAuthHeaders,
   type EndpointAuthHeaders
 } from './endpoint-auth-headers'
-import { markHostCredentialWrite } from './host-credential-write-revision'
+import {
+  getHostCredentialWriteRevision,
+  markHostCredentialWrite
+} from './host-credential-write-revision'
 import {
   deletePairingKeychainItem,
   readPairingKeychainItem,
@@ -78,17 +81,22 @@ export async function primeEndpointAuthHeaders(
   hostId: string,
   isCurrent?: () => boolean
 ): Promise<EndpointAuthHeaders | null> {
+  // Why: a header write landing mid-read must win — only cache when nothing changed underneath.
+  const revision = getHostCredentialWriteRevision(hostId)
+  const unchanged = () => getHostCredentialWriteRevision(hostId) === revision
   try {
     const headers = await readEndpointAuthHeaders(hostId)
     // Why: a removal may have cleared the cache while this read was in flight — a stale
     // open must not resurrect it. The opener rechecks ownership right after this anyway.
-    if (isCurrent && !isCurrent()) {
+    if (!unchanged() || (isCurrent && !isCurrent())) {
       return headers
     }
     cacheEndpointAuthSnapshot(hostId, headers)
     return headers
   } catch {
-    cacheEndpointAuthSnapshot(hostId, null)
+    if (unchanged()) {
+      cacheEndpointAuthSnapshot(hostId, null)
+    }
     return null
   }
 }

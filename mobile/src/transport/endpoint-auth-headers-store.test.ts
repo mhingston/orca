@@ -20,7 +20,10 @@ vi.mock('expo-secure-store', () => ({
 }))
 vi.mock('react-native', () => ({ Platform: platformMock }))
 
-import { resetHostCredentialWriteRevisionsForTests } from './host-credential-write-revision'
+import {
+  markHostCredentialWrite,
+  resetHostCredentialWriteRevisionsForTests
+} from './host-credential-write-revision'
 import { cacheEndpointAuthSnapshot, peekEndpointAuthHeaders } from './endpoint-auth-headers'
 import { resetPairingKeychainForTests } from './pairing-keychain'
 import {
@@ -108,6 +111,15 @@ describe('endpoint auth header storage', () => {
       JSON.stringify({ v: 1, hostId: 'host-1', headers: { 'X-A': 'b' } })
     )
     expect(await primeEndpointAuthHeaders('host-1', () => false)).toEqual({ 'X-A': 'b' })
+    expect(peekEndpointAuthHeaders('host-1')).toBeNull()
+  })
+
+  it('skips caching when headers changed mid-read', async () => {
+    secureStoreMock.getItemAsync.mockImplementation(async () => {
+      markHostCredentialWrite('host-1')
+      return JSON.stringify({ v: 1, hostId: 'host-1', headers: { 'X-Old': 'b' } })
+    })
+    expect(await primeEndpointAuthHeaders('host-1')).toEqual({ 'X-Old': 'b' })
     expect(peekEndpointAuthHeaders('host-1')).toBeNull()
   })
 })
