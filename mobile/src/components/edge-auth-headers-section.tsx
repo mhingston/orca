@@ -95,32 +95,39 @@ export function EdgeAuthHeadersSection({
 }) {
   const focusedRowId = useRef<string | null>(null)
   const rowRefs = useRef(new Map<string, View>())
+  const scrollFocusedRowIntoView = useCallback(() => {
+    const row = focusedRowId.current ? rowRefs.current.get(focusedRowId.current) : undefined
+    const scroller = scrollViewRef.current
+    if (!row || !scroller) {
+      return
+    }
+    const handle = findNodeHandle(row)
+    if (typeof handle !== 'number') {
+      return
+    }
+    scroller.scrollResponderScrollNativeHandleToKeyboard(handle, spacing.md, true)
+  }, [scrollViewRef])
   useEffect(
     () =>
       // Why: bottom rows sit under the keyboard on small screens — scroll the focused row
       // into view when the keyboard lands, on top of whatever the OS already does.
       subscribeSoftKeyboard(
-        () => {
-          const row = focusedRowId.current ? rowRefs.current.get(focusedRowId.current) : undefined
-          const scroller = scrollViewRef.current
-          if (!row || !scroller) {
-            return
-          }
-          const handle = findNodeHandle(row)
-          if (typeof handle !== 'number') {
-            return
-          }
-          scroller.scrollResponderScrollNativeHandleToKeyboard(handle, spacing.md, true)
-        },
+        () => scrollFocusedRowIntoView(),
         () => {
           focusedRowId.current = null
         }
       ),
-    [scrollViewRef]
+    [scrollFocusedRowIntoView]
   )
-  const focusRow = useCallback((id: string) => {
-    focusedRowId.current = id
-  }, [])
+  const focusRow = useCallback(
+    (id: string) => {
+      focusedRowId.current = id
+      // Why: the keyboard is usually already open from an earlier field, so no show event
+      // fires — scroll immediately as well as on keyboard show.
+      scrollFocusedRowIntoView()
+    },
+    [scrollFocusedRowIntoView]
+  )
   return (
     <View>
       <Text style={styles.label}>Edge authentication</Text>

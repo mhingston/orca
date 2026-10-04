@@ -95,4 +95,39 @@ describe('edge auth headers section keyboard', () => {
     )
     act(() => requireRenderer(renderer).unmount())
   })
+
+  it('scrolls immediately on focus when the keyboard is already open', async () => {
+    scroller.scrollResponderScrollNativeHandleToKeyboard.mockClear()
+    const scrollViewRef = { current: scroller }
+    let renderer: ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = create(
+        createElement(EdgeAuthHeadersSection, {
+          rows: [{ ...newEdgeAuthRow(), name: '', value: '' }],
+          storedCount: 0,
+          error: null,
+          onRowsChange: () => {},
+          scrollViewRef
+        }),
+        // Why: host-element refs only attach with a node mock in this renderer.
+        { createNodeMock: () => ({}) }
+      )
+      await Promise.resolve()
+    })
+    const root = requireRenderer(renderer).root
+    const inputs = root.findAll((node) => String(node.type) === 'TextInput')
+    expect(inputs).toHaveLength(2)
+    await act(async () => {
+      inputs[0]?.props.onFocus()
+      await Promise.resolve()
+    })
+
+    // Why: no keyboard show event fires here — the scroll must happen on focus alone.
+    expect(scroller.scrollResponderScrollNativeHandleToKeyboard).toHaveBeenCalledWith(
+      123,
+      expect.any(Number),
+      true
+    )
+    act(() => requireRenderer(renderer).unmount())
+  })
 })
