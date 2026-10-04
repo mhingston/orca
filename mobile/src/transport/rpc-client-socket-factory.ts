@@ -55,16 +55,22 @@ export class RpcClientSocketFactory {
       msSinceLastInbound: this.lastInboundAt !== null ? now - this.lastInboundAt : null
     })
     this.dialStartedAt = now
+    const edgeAuthHeaders = edgeAuthHeadersForEndpoint(
+      this.options.endpoint,
+      this.options.edgeAuthHeaders ?? null
+    )
+    // Why: names only — the diagnostics must show whether edge auth rode this dial without
+    // ever carrying values. Headerless dials keep the exact historical detail string.
+    const dialDetail =
+      edgeAuthHeaders && Object.keys(edgeAuthHeaders).length > 0
+        ? `${redactSocketEndpoint(this.options.endpoint)} (${describeEndpointAuthHeadersForLog(edgeAuthHeaders)})`
+        : redactSocketEndpoint(this.options.endpoint)
     this.options.emitLog(
       'info',
       this.options.getReconnectAttempt() > 0
         ? `Reconnecting (attempt ${this.options.getReconnectAttempt() + 1})`
         : 'Opening WebSocket',
-      redactSocketEndpoint(this.options.endpoint)
-    )
-    const edgeAuthHeaders = edgeAuthHeadersForEndpoint(
-      this.options.endpoint,
-      this.options.edgeAuthHeaders ?? null
+      dialDetail
     )
     if (this.options.edgeAuthHeaders && !edgeAuthHeaders) {
       // Why: values stay out of every log; the names-only helper says which edge config was refused.
