@@ -14,7 +14,8 @@ export async function writeEndpointAuthHeaders(
 export async function deleteEndpointAuthHeaders(_hostId: string): Promise<void> {}
 
 export async function primeEndpointAuthHeaders(
-  _hostId: string
+  _hostId: string,
+  _isCurrent?: () => boolean
 ): Promise<Record<string, string> | null> {
   return null
 }

@@ -50,7 +50,19 @@ export async function writeEndpointAuthHeaders(
   hostId: string,
   headers: EndpointAuthHeaders
 ): Promise<void> {
-  const validated = EndpointAuthBundleSchema.parse({ v: 1, hostId, headers })
+  // Why: the reader enforces the same schema — normalize first so a write can never persist
+  // what a later read would reject. Names in the error are truncated; values never appear.
+  const normalized = normalizeEndpointAuthHeaders(
+    Object.entries(headers).map(([name, value]) => ({ name, value }))
+  )
+  if (!normalized.ok) {
+    throw new Error(`Invalid edge-auth headers: ${normalized.error}`)
+  }
+  const validated = EndpointAuthBundleSchema.parse({
+    v: 1,
+    hostId,
+    headers: normalized.headers
+  })
   markHostCredentialWrite(validated.hostId)
   await writePairingKeychainItem(headersKey(validated.hostId), JSON.stringify(validated))
   cacheEndpointAuthSnapshot(validated.hostId, validated.headers)
@@ -63,10 +75,16 @@ export async function deleteEndpointAuthHeaders(hostId: string): Promise<void> {
 
 /** Load headers into memory before opening a client; failures fall back to no headers. */
 export async function primeEndpointAuthHeaders(
-  hostId: string
+  hostId: string,
+  isCurrent?: () => boolean
 ): Promise<EndpointAuthHeaders | null> {
   try {
     const headers = await readEndpointAuthHeaders(hostId)
+    // Why: a removal may have cleared the cache while this read was in flight — a stale
+    // open must not resurrect it. The opener rechecks ownership right after this anyway.
+    if (isCurrent && !isCurrent()) {
+      return headers
+    }
     cacheEndpointAuthSnapshot(hostId, headers)
     return headers
   } catch {

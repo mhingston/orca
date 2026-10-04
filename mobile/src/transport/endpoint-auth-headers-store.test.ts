@@ -85,9 +85,29 @@ describe('endpoint auth header storage', () => {
     expect(peekEndpointAuthHeaders('host-1')).toBeNull()
   })
 
+  it('rejects un-normalizable headers instead of persisting them', async () => {
+    const tooMany = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`X-H-${i}`, 'v']))
+    await expect(writeEndpointAuthHeaders('host-1', tooMany)).rejects.toThrow(
+      'Invalid edge-auth headers'
+    )
+    await expect(writeEndpointAuthHeaders('host-1', { 'bad name': 'v' })).rejects.toThrow(
+      'Invalid edge-auth headers'
+    )
+    expect(secureStoreMock.setItemAsync).not.toHaveBeenCalled()
+    expect(peekEndpointAuthHeaders('host-1')).toBeNull()
+  })
+
   it('primes fail-closed when the store throws', async () => {
     secureStoreMock.getItemAsync.mockRejectedValue(new Error('keystore locked'))
     expect(await primeEndpointAuthHeaders('host-1')).toBeNull()
+    expect(peekEndpointAuthHeaders('host-1')).toBeNull()
+  })
+
+  it('skips caching when the open is no longer current', async () => {
+    secureStoreMock.getItemAsync.mockResolvedValue(
+      JSON.stringify({ v: 1, hostId: 'host-1', headers: { 'X-A': 'b' } })
+    )
+    expect(await primeEndpointAuthHeaders('host-1', () => false)).toEqual({ 'X-A': 'b' })
     expect(peekEndpointAuthHeaders('host-1')).toBeNull()
   })
 })
