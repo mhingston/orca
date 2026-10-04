@@ -282,7 +282,7 @@ export default function EditHostScreen() {
             />
             <Text style={styles.hint}>
               Accepts IP, host:port, or ws:// / wss://. Missing port defaults to the current port
-              (or 6768).
+              (443 for wss://, 6768 otherwise).
             </Text>
 
             {endpointEdit == null ? null : endpointEdit.kind !== 'invalid' ? (
