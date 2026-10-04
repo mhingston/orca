@@ -122,4 +122,13 @@ describe('endpoint auth header storage', () => {
     expect(await primeEndpointAuthHeaders('host-1')).toEqual({ 'X-Old': 'b' })
     expect(peekEndpointAuthHeaders('host-1')).toBeNull()
   })
+
+  it('skips caching when headers were cleared mid-read', async () => {
+    secureStoreMock.getItemAsync.mockImplementation(async () => {
+      await deleteEndpointAuthHeaders('host-1')
+      return JSON.stringify({ v: 1, hostId: 'host-1', headers: { 'X-Old': 'b' } })
+    })
+    expect(await primeEndpointAuthHeaders('host-1')).toEqual({ 'X-Old': 'b' })
+    expect(peekEndpointAuthHeaders('host-1')).toBeNull()
+  })
 })

@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import {
   cacheEndpointAuthSnapshot,
+  endpointAuthMutationEpoch,
   normalizeEndpointAuthHeaders,
+  noteEndpointAuthHeadersChanged,
   type EndpointAuthHeaders
 } from './endpoint-auth-headers'
 import {
@@ -68,10 +70,14 @@ export async function writeEndpointAuthHeaders(
   })
   markHostCredentialWrite(validated.hostId)
   await writePairingKeychainItem(headersKey(validated.hostId), JSON.stringify(validated))
+  noteEndpointAuthHeadersChanged(validated.hostId)
   cacheEndpointAuthSnapshot(validated.hostId, validated.headers)
 }
 
 export async function deleteEndpointAuthHeaders(hostId: string): Promise<void> {
+  // Why: no revision bump here — the deferred removal chain treats any revision change as a
+  // concurrent re-pair and aborts; the mutation epoch below is what invalidates in-flight primes.
+  noteEndpointAuthHeadersChanged(hostId)
   await deletePairingKeychainItem(headersKey(hostId))
   cacheEndpointAuthSnapshot(hostId, null)
 }
@@ -81,9 +87,13 @@ export async function primeEndpointAuthHeaders(
   hostId: string,
   isCurrent?: () => boolean
 ): Promise<EndpointAuthHeaders | null> {
-  // Why: a header write landing mid-read must win — only cache when nothing changed underneath.
+  // Why: an auth mutation landing mid-read must win — only cache when neither the shared
+  // credential revision nor the auth mutation epoch moved underneath this read.
   const revision = getHostCredentialWriteRevision(hostId)
-  const unchanged = () => getHostCredentialWriteRevision(hostId) === revision
+  const epoch = endpointAuthMutationEpoch(hostId)
+  const unchanged = () =>
+    getHostCredentialWriteRevision(hostId) === revision &&
+    endpointAuthMutationEpoch(hostId) === epoch
   try {
     const headers = await readEndpointAuthHeaders(hostId)
     // Why: a removal may have cleared the cache while this read was in flight — a stale

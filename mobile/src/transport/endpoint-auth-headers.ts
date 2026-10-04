@@ -102,6 +102,16 @@ export function edgeAuthHeadersForEndpoint(
 }
 
 const snapshotByHostId = new Map<string, EndpointAuthHeaders>()
+const mutationEpochByHostId = new Map<string, number>()
+
+/** Bumped by every auth mutation so in-flight primes can detect a mid-read change. */
+export function noteEndpointAuthHeadersChanged(hostId: string): void {
+  mutationEpochByHostId.set(hostId, (mutationEpochByHostId.get(hostId) ?? 0) + 1)
+}
+
+export function endpointAuthMutationEpoch(hostId: string): number {
+  return mutationEpochByHostId.get(hostId) ?? 0
+}
 
 /** In-memory snapshot for the sync dial path; primed from the store before open. */
 export function cacheEndpointAuthSnapshot(

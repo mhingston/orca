@@ -7,7 +7,6 @@ import * as hostListLoads from './host-list-load-sharing'
 import { joinHostCatalogCredentials } from './host-catalog-credential-join'
 import { resetPairingKeychainForTests } from './pairing-keychain'
 import { readHostDeviceToken, writeHostDeviceToken } from './host-device-token-store'
-import { clearEndpointAuthHeadersCache } from './endpoint-auth-headers'
 import {
   cancelPendingHostCredentialCleanup,
   recordHostCredentialCleanupIntent,
@@ -271,8 +270,6 @@ export async function removeHost(hostId: string): Promise<void> {
     throw error
   }
   tokenCache.delete(hostId)
-  // Why: synchronous — a re-pair reusing this id must never inherit the previous edge-auth snapshot.
-  clearEndpointAuthHeadersCache(hostId)
   try {
     await removeMobileRelayHostRouting(hostId)
     hostListLoads.dropSharedHostListLoad()
